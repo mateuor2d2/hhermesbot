@@ -1,0 +1,31 @@
+# Secrets
+.env
+.env.*
+*.key
+*.pem
+
+# Test data
+test-env/
+*.db
+*.db-journal
+
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backups
+*.backup
+*.bak
+*.orig
+*.rej

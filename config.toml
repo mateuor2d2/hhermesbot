@@ -1,0 +1,99 @@
+# Configuración del bot - Editar para cada entidad
+
+[bot]
+name = "Colegio de Ingenieros"
+description = "Bot oficial del Colegio de Ingenieros"
+token="${BOT_TOKEN}"
+admins = [109371886]  # Telegram IDs de administradores
+relay_timeout = 30  # Timeout en segundos para relay
+
+[api]
+# API de Kimi (Moonshot AI)
+base_url = "https://api.moonshot.cn/v1"
+api_key="${KIMI_API_KEY}"
+model = "kimi-latest"
+max_tokens = 2048
+
+[limits]
+# Límite de mensajes IA por día por usuario
+max_ia_messages_per_day = 20
+
+[database]
+# Base de datos compartida para todas las instancias
+# Opción 1: SQLite (desarrollo, 1 solo bot)
+type = "sqlite"
+path = "/home/oc/.zeroclaw/workspace/colegio-bot/data/bot.db"
+
+# Opción 2: PostgreSQL (producción, múltiples bots)
+# type = "postgres"
+# host = "localhost"
+# port = 5432
+# name = "colegio_bots"
+# user = "bot_user"
+# password="${DB_PASSWORD}"
+
+[instance]
+# Identificador único de esta instancia (para multi-bot)
+# Debe coincidir con el nombre de la entidad
+bot_id = "colegio_ingenieros"
+
+[features]
+# Habilitar/deshabilitar funcionalidades
+enable_ia_chat = true
+enable_services = true
+enable_search = true
+enable_messaging = true
+enable_relay = true
+enable_company_registration = true  # Permitir registro de empresas
+# Chat ID donde reenviar mensajes
+relay_target_chat_id = 0
+
+[broadcast]
+# Sistema de difusión limitada
+enabled = true
+quarterly_limit = 1                    # Difusiones gratis por trimestre
+channel_id = "-1001234567890"            # Canal de difusión (público)
+consultation_chat_id = ""              # Canal de consultas IA (vacío = mismo bot)
+payment_enabled = false                # Permitir comprar más difusiones (TODO: Enable when Stripe ready)
+payment_price = 5.0                    # Precio por difusión adicional (euros)
+
+[access]
+# Control de acceso
+public_search = true                   # Cualquiera puede buscar empresas
+registered_only_chat = false           # Solo registrados pueden usar IA
+
+[subscriptions]
+# Requisitos de suscripción
+required_for_broadcast = true          # Deben estar en canal para difundir
+auto_check = true                      # Verificar automáticamente
+
+[membership]
+# Configuración de membresía
+institution = "Colegio de Ingenieros"   # Nombre de la organización
+requires_membership_number = true       # Requiere número de colegiado
+exclusive_to_members = false            # true = solo miembros pueden registrarse
+price = 9.99                            # Precio mensual para no-miembros (euros)
+enable_member_search = true             # Permitir buscar contactos de otros miembros
+verify_membership = true                # Verificar membresía antes de permitir búsqueda
+
+[stripe]
+# Configuración de Stripe - CADA ENTIDAD USA LAS SUYAS
+# Obtener en: https://dashboard.stripe.com/apikeys
+#
+# Modo test (true) o producción (false)
+test_mode = true
+#
+# Claves API de Stripe
+secret_key = "${STRIPE_SECRET_KEY}"
+publishable_key = "${STRIPE_PUBLISHABLE_KEY}"
+webhook_secret="${STRIPE_WEBHOOK_SECRET}"
+#
+# Configuración de precios
+price_per_broadcast = 5.0              # Precio por difusión adicional (euros)
+#
+# IDs de Stripe (se rellenan tras crear producto/precio en dashboard)
+product_id = ""                      # Ej: prod_xxxxxxxxxx
+price_id = ""                        # Ej: price_xxxxxxxxxx
+#
+# URL base para webhooks y redirects (cambiar por dominio real)
+base_url = "https://tudominio.com"

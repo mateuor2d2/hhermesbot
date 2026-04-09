@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: colegio-bot
+    restart: unless-stopped
+    environment:
+      # Telegram Bot Token (from @BotFather)
+      - TELOXIDE_TOKEN=${TELOXIDE_TOKEN}
+      # Optional: Test token for development
+      - TELOXIDE_TOKEN_TEST=${TELOXIDE_TOKEN_TEST:-}
+      # AI API Key (Kimi/OpenAI)
+      - KIMI_API_KEY=${KIMI_API_KEY:-}
+      # Stripe Configuration (optional - for payments)
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      # Logging level
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      # Persist database
+      - ./data:/app/data
+      # Configuration file (read-only)
+      - ./config.toml:/app/config.toml:ro
+      # Environment file (optional)
+      - ./.env:/app/.env:ro
+    networks:
+      - bot-network
+
+networks:
+  bot-network:
+    driver: bridge
