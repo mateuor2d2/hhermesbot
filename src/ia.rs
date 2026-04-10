@@ -37,12 +37,14 @@ struct Choice {
 #[derive(Deserialize)]
 struct ResponseMessage {
     content: String,
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 impl IaClient {
     pub fn new(config: Arc<ApiConfig>, api_key: String) -> anyhow::Result<Self> {
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(60))
             .build()?;
 
         Ok(Self {
@@ -79,6 +81,7 @@ impl IaClient {
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
+            .header("User-Agent", "KimiCLI/1.0")
             .json(&request)
             .send()
             .await?;
@@ -93,7 +96,15 @@ impl IaClient {
         let content = chat_response
             .choices
             .first()
-            .map(|c| c.message.content.clone())
+            .map(|c| {
+                // Kimi Code API returns response in reasoning_content, content is empty
+                let msg = &c.message;
+                if msg.content.is_empty() {
+                    msg.reasoning_content.clone().unwrap_or_default()
+                } else {
+                    msg.content.clone()
+                }
+            })
             .unwrap_or_else(|| "Lo siento, no pude generar una respuesta.".to_string());
 
         Ok(content)

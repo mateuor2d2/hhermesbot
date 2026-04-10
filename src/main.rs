@@ -329,6 +329,10 @@ async fn handle_text_messages(
                 dialogue.reset().await?;
                 return handle_search_by_field_query(bot, msg, state, field, text.to_string()).await;
             }
+            BotDialogueState::Chat => {
+                // Modo chat activo - procesar mensaje con IA
+                return handle_chat(bot, msg, state, text.to_string()).await;
+            }
             _ => {
                 // No hay diálogo activo, procesar mensajes normales
             }

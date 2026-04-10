@@ -379,12 +379,15 @@ pub async fn handle_broadcast_buy(
     db: SharedDb,
     config: Arc<Config>,
 ) -> anyhow::Result<()> {
+    // Log para debugging
+    tracing::info!("handle_broadcast_buy: payment_enabled = {}", config.broadcast.payment_enabled);
+    
     // Verificar que los pagos están habilitados
     if !config.broadcast.payment_enabled {
         bot.send_message(
             chat_id,
-            "❌ El sistema de pagos no está configurado.\n\
-            Contacta con el administrador para comprar créditos."
+            "❌ El sistema de pagos está deshabilitado en la configuración.\n\
+            Contacta con el administrador."
         )
         .parse_mode(ParseMode::Html)
         .await?;
@@ -440,6 +443,14 @@ pub async fn handle_buy_pack(
 ) -> anyhow::Result<()> {
     use crate::payments::{StripeClient, get_pack_by_name_owned};
     
+    // Log para debugging - mostrar primeros caracteres de la key
+    let key_preview = if config.stripe.secret_key.len() > 10 {
+        format!("{}...", &config.stripe.secret_key[..10])
+    } else {
+        "VACIO O CORTO".to_string()
+    };
+    tracing::info!("Stripe secret_key preview: {}", key_preview);
+    
     let stripe_config = Arc::new(config.stripe.clone());
     
     let pack = match get_pack_by_name_owned(pack_name) {
@@ -459,7 +470,6 @@ pub async fn handle_buy_pack(
     
     let stripe = StripeClient::new(stripe_config);
     
-    // FIX: pack needs to be passed as reference (&pack)
     match stripe.create_checkout_session(user_id, &pack).await {
         Ok(checkout_url) => {
             let text = format!(
@@ -485,12 +495,22 @@ pub async fn handle_buy_pack(
         }
         Err(e) => {
             tracing::error!("Error creating checkout session: {}", e);
-            bot.send_message(
-                chat_id,
-                "❌ Error al crear la sesión de pago. Inténtalo de nuevo más tarde."
-            )
-            .parse_mode(ParseMode::Html)
-            .await?;
+            let error_str = e.to_string();
+            // Limit error message length for Telegram (max 4096 chars)
+            let truncated = if error_str.len() > 200 {
+                format!("{}...", &error_str[..200])
+            } else {
+                error_str
+            };
+            let error_msg = format!(
+                "❌ <b>Error al crear la sesión de pago</b>\n\n\
+                Detalle: <code>{}</code>\n\n\
+                Verifica que la configuración de Stripe sea correcta.",
+                truncated
+            );
+            bot.send_message(chat_id, error_msg)
+                .parse_mode(ParseMode::Html)
+                .await?;
         }
     }
     

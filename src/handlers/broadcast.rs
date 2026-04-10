@@ -5,6 +5,7 @@ use crate::db::SharedDb;
 use crate::config::Config;
 use crate::handlers::BotState;
 use crate::dialogue::states::{BotDialogueState, BroadcastState};
+use crate::text_processor::escape_html;
 
 use crate::payments::{format_packs_keyboard, get_pack_by_name, StripeClient};
 use std::sync::Arc;
@@ -402,7 +403,7 @@ async fn check_channel_subscription(
     }
 }
 
-/// Envía la difusión al canal
+/// Envía la difusión a todos los usuarios del bot
 async fn send_broadcast_to_channel(
     bot: &Bot,
     db: &SharedDb,
@@ -422,29 +423,71 @@ async fn send_broadcast_to_channel(
     
     let used_free_credit = used_count < free_limit;
     
-    // Preparar mensaje para el canal
+    // Preparar mensaje de difusión (escapar HTML para evitar errores de parseo)
     let author_info = username
-        .map(|u| format!("@{}", u))
+        .map(|u| format!("@{}", escape_html(u)))
         .unwrap_or_else(|| "Anónimo".to_string());
     
-    let channel_message = format!(
+    let safe_title = escape_html(title);
+    let safe_content = escape_html(content);
+    
+    let broadcast_message = format!(
         "📢 <b>{}</b>\n\n\
         {}\n\n\
         ───────────────\n\
         📎 Publicado por: {}\n\
-        #Difusión #T{}",
-        title,
-        content,
+        #Difusión #{}",
+        safe_title,
+        safe_content,
         author_info,
         quarter
     );
 
-    // Enviar al canal
-    let channel_id_i64 = config.broadcast.channel_id.parse::<i64>()?;
-    let sent = bot
-        .send_message(ChatId(channel_id_i64), channel_message)
-        .parse_mode(ParseMode::Html)
-        .await?;
+    // Obtener todos los usuarios para enviarles la difusión
+    let users = db.get_all_users().await?;
+    let mut success_count = 0;
+    let mut error_count = 0;
+
+    // Enviar a cada usuario (incluyendo al emisor)
+    tracing::info!("Enviando difusión a {} usuarios...", users.len());
+    for user in &users {
+        let chat_id = ChatId(user.telegram_id);
+        tracing::debug!("Enviando a usuario {} (chat_id: {})", user.telegram_id, chat_id.0);
+        match bot
+            .send_message(chat_id, &broadcast_message)
+            .parse_mode(ParseMode::Html)
+            .await
+        {
+            Ok(_) => {
+                success_count += 1;
+                tracing::debug!("✅ Enviado correctamente a {}", user.telegram_id);
+            }
+            Err(e) => {
+                tracing::error!("❌ Error enviando a usuario {}: {:?}", user.telegram_id, e);
+                error_count += 1;
+            }
+        }
+    }
+    tracing::info!("Difusión completada: {} exitosos, {} fallidos", success_count, error_count);
+
+    // Intentar enviar al canal si está configurado (opcional)
+    let mut channel_message_id: Option<i32> = None;
+    if !config.broadcast.channel_id.is_empty() {
+        if let Ok(channel_id_i64) = config.broadcast.channel_id.parse::<i64>() {
+            match bot
+                .send_message(ChatId(channel_id_i64), &broadcast_message)
+                .parse_mode(ParseMode::Html)
+                .await
+            {
+                Ok(sent) => {
+                    channel_message_id = Some(sent.id.0);
+                }
+                Err(e) => {
+                    tracing::warn!("Error enviando al canal (opcional): {:?}", e);
+                }
+            }
+        }
+    }
 
     // Actualizar uso
     if used_free_credit {
@@ -455,21 +498,23 @@ async fn send_broadcast_to_channel(
 
     // Guardar registro
     sqlx::query(
-        "INSERT INTO broadcasts (user_id, title, content, channel_message_id, is_paid) VALUES (?, ?, ?, ?, ?)"
+        "INSERT INTO broadcasts (user_id, title, content, channel_message_id, is_paid, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))"
     )
     .bind(user_id)
     .bind(title)
     .bind(content)
-    .bind(sent.id.0)
+    .bind(channel_message_id)
     .bind(!used_free_credit)
     .execute(&db.pool)
     .await?;
 
     Ok(format!(
-        "✅ ¡Difusión enviada correctamente!\n\n\
+        "✅ ¡Difusión enviada!\n\n\
         📊 Crédito usado: {}\n\
-        🔗 Ver en canal",
-        if used_free_credit { "Gratis" } else { "Pagado" }
+        👥 Usuarios: {} enviados, {} errores",
+        if used_free_credit { "Gratis" } else { "Pagado" },
+        success_count,
+        error_count
     ))
 }
 

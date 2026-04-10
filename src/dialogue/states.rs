@@ -38,7 +38,7 @@ pub enum BroadcastState {
     },
 }
 
-/// Combined dialogue state that can handle broadcast and search flows
+/// Combined dialogue state that can handle broadcast, search, and chat flows
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub enum BotDialogueState {
     #[default]
@@ -47,6 +47,8 @@ pub enum BotDialogueState {
     Broadcast(BroadcastState),
     // Search states
     Search(SearchState),
+    // Chat mode - el usuario está en modo conversación con IA
+    Chat,
 }
 
 /// Datos de un centro durante el registro

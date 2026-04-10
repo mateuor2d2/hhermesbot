@@ -8,7 +8,7 @@ use crate::db::SharedDb;
 use crate::ia::SharedIa;
 use crate::text_processor::escape_html;
 use crate::wizard::{self, WizardStep, RegistrationData};
-use crate::dialogue::states::{BotDialogueState, SearchState, SearchField};
+use crate::dialogue::states::{BotDialogueState, SearchState, SearchField, BroadcastState};
 use std::sync::Arc;
 pub mod broadcast_extended;
 pub mod broadcast;
@@ -458,6 +458,33 @@ pub async fn handle_callback(
                 let help_msg = "¿Necesitas ayuda? Usa el comando /help para ver todas las opciones.";
                 bot.send_message(chat_id, help_msg).await?;
             }
+        } else if data == "back_to_menu" {
+            // Volver al menú principal desde el chat IA
+            if let Some(chat_id) = chat_id {
+                // Resetear el diálogo al estado inicial
+                dialogue.update(crate::dialogue::states::BotDialogueState::Idle).await?;
+                
+                // Enviar mensaje de confirmación con menú
+                let menu_msg = "🔙 <b>Menú principal</b>\n\n¿Qué deseas hacer?";
+                let keyboard = InlineKeyboardMarkup::new(vec![
+                    vec![
+                        InlineKeyboardButton::callback("🔍 Buscar", "menu:buscar"),
+                        InlineKeyboardButton::callback("💬 Chat IA", "menu:chat"),
+                    ],
+                    vec![
+                        InlineKeyboardButton::callback("ℹ️ Info", "menu:info"),
+                        InlineKeyboardButton::callback("📋 Mis datos", "menu:misdatos"),
+                    ],
+                    vec![
+                        InlineKeyboardButton::callback("📢 Difusiones", "menu:difusiones"),
+                        InlineKeyboardButton::callback("📩 Mensajes", "menu:mensajes"),
+                    ],
+                ]);
+                bot.send_message(chat_id, menu_msg)
+                    .parse_mode(ParseMode::Html)
+                    .reply_markup(keyboard)
+                    .await?;
+            }
         }
 
         // Manejar callbacks del wizard de registro
@@ -468,7 +495,7 @@ pub async fn handle_callback(
 
         // Manejar callbacks del menú de difusiones
         else if data.starts_with("broadcast:") {
-            handle_broadcast_menu_callback(bot.clone(), q.clone(), state, data).await?;
+            handle_broadcast_menu_callback(bot.clone(), q.clone(), state, dialogue.clone(), data).await?;
             return Ok(());
         }
         
@@ -1137,6 +1164,12 @@ pub async fn handle_chat(
         state.config.bot.name  // No necesita escape aquí, es solo para la IA
     );
 
+    // Botón de volver al menú
+    let back_button = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+        "🔙 Volver al menú",
+        "back_to_menu",
+    )]]);
+
     // Llamar a la IA
     match ia.chat(&text, Some(&context)).await {
         Ok(response) => {
@@ -1148,15 +1181,22 @@ pub async fn handle_chat(
 
             bot.send_message(msg.chat.id, full_response)
                 .parse_mode(teloxide::types::ParseMode::Html)
+                .reply_markup(back_button)
                 .await?;
         }
         Err(e) => {
             tracing::error!("IA error: {}", e);
-            bot.send_message(
-                msg.chat.id,
-                "Lo siento, hubo un error al procesar tu mensaje. Inténtalo de nuevo más tarde.",
-            )
-            .await?;
+            let error_msg = if e.to_string().contains("Invalid Authentication") {
+                "❌ <b>Error de autenticación con la IA</b>\n\n\
+                La API key configurada no es válida o ha expirado.\n\
+                Contacta con el administrador para actualizar la configuración.".to_string()
+            } else {
+                "Lo siento, hubo un error al procesar tu mensaje. Inténtalo de nuevo más tarde.".to_string()
+            };
+            bot.send_message(msg.chat.id, error_msg)
+                .parse_mode(ParseMode::Html)
+                .reply_markup(back_button)
+                .await?;
         }
     }
 
@@ -2263,11 +2303,14 @@ async fn handle_menu_callback(
         }
         "menu:chat" => {
             if let Some(chat_id) = chat_id {
+                // Activar modo chat
+                dialogue.update(crate::dialogue::states::BotDialogueState::Chat).await?;
+                
                 bot.send_message(
                     chat_id,
                     "💬 <b>Modo chat activado</b>\n\n\
                     Escribe tu mensaje y responderé usando IA.\n\n\
-                    Usa /help para volver al menú principal."
+                    Usa /start para volver al menú principal."
                 )
                 .parse_mode(ParseMode::Html)
                 .await?;
@@ -2663,7 +2706,6 @@ async fn handle_menu_callback(
             }
         }
         "menu:difusiones" => {
-            
             if let Some(chat_id) = chat_id {
                 let user_id = q.from.id.0 as i64;
                 crate::handlers::broadcast_extended::handle_menu_difusiones(
@@ -2674,16 +2716,18 @@ async fn handle_menu_callback(
                     state.config.clone()
                 ).await?;
             }
+        }
+        "menu:mensajes" => {
             if let Some(chat_id) = chat_id {
                 let messages = state.db.get_unread_messages(telegram_id).await?;
                 
                 if messages.is_empty() {
                     bot.send_message(chat_id, "📭 No tienes mensajes nuevos.").await?;
                 } else {
-                    let mut response = format!("<b>Tienes {} mensajes nuevos:</b>\n\n", messages.len());
+                    let mut response = format!("📩 <b>Tienes {} mensajes nuevos:</b>\n\n", messages.len());
                     for mensaje in messages.iter().take(5) {
                         response.push_str(&format!(
-                            "📩 <b>{}</b>\n{}\n\n",
+                            "<b>{}</b>\n{}\n\n",
                             mensaje.asunto,
                             mensaje.contenido
                         ));
@@ -3098,6 +3142,7 @@ async fn handle_broadcast_menu_callback(
     bot: Bot,
     q: CallbackQuery,
     state: Arc<BotState>,
+    dialogue: MyDialogue,
     data: &str,
 ) -> anyhow::Result<()> {
     let user_id = q.from.id.0 as i64;
@@ -3160,12 +3205,7 @@ async fn handle_broadcast_menu_callback(
             .await?;
             
             // Actualizar diálogo para esperar el título
-            // Nota: Esto requiere acceso al diálogo, pero handle_callback no lo pasa directamente.
-            // Usaremos un mensaje de texto que el usuario debe enviar con /broadcast
-            bot.send_message(
-                chat_id,
-                "💡 Usa el comando /broadcast para iniciar el proceso completo de difusión."
-            ).await?;
+            dialogue.update(BotDialogueState::Broadcast(BroadcastState::WaitingTitle)).await?;
         }
     } else if data.starts_with("broadcast:history:") {
         let page: usize = data[17..].parse().unwrap_or(0);

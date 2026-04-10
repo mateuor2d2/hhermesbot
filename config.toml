@@ -8,10 +8,10 @@ admins = [109371886]  # Telegram IDs de administradores
 relay_timeout = 30  # Timeout en segundos para relay
 
 [api]
-# API de Kimi (Moonshot AI)
-base_url = "https://api.moonshot.cn/v1"
+# Kimi Code API
+base_url = "https://api.kimi.com/coding/v1"
 api_key="${KIMI_API_KEY}"
-model = "kimi-latest"
+model = "kimi-k2.5"
 max_tokens = 2048
 
 [limits]
@@ -22,7 +22,7 @@ max_ia_messages_per_day = 20
 # Base de datos compartida para todas las instancias
 # Opción 1: SQLite (desarrollo, 1 solo bot)
 type = "sqlite"
-path = "/home/oc/.zeroclaw/workspace/colegio-bot/data/bot.db"
+path = "/home/oc/.hermes/projects/colegio-bot/data/bot.db"
 
 # Opción 2: PostgreSQL (producción, múltiples bots)
 # type = "postgres"
@@ -54,7 +54,7 @@ enabled = true
 quarterly_limit = 1                    # Difusiones gratis por trimestre
 channel_id = "-1001234567890"            # Canal de difusión (público)
 consultation_chat_id = ""              # Canal de consultas IA (vacío = mismo bot)
-payment_enabled = false                # Permitir comprar más difusiones (TODO: Enable when Stripe ready)
+payment_enabled = true                 # Permitir comprar más difusiones
 payment_price = 5.0                    # Precio por difusión adicional (euros)
 
 [access]
@@ -96,4 +96,5 @@ product_id = ""                      # Ej: prod_xxxxxxxxxx
 price_id = ""                        # Ej: price_xxxxxxxxxx
 #
 # URL base para webhooks y redirects (cambiar por dominio real)
-base_url = "https://tudominio.com"
+# Para testing local sin webhooks, usa una URL ficticia
+base_url = "https://bot.local"
