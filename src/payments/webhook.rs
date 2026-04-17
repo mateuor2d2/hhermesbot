@@ -79,12 +79,11 @@ async fn process_checkout_session(
     pool: &SqlitePool,
 ) -> Result<(), String> {
     let metadata = &session["metadata"];
-    
+
     // Extraer telegram_id
     let telegram_id = match metadata["telegram_id"].as_str() {
         Some(id) => id.parse::<i64>().map_err(|_| "Invalid telegram_id")?,
         None => {
-            // Intentar extraer del client_reference_id
             let ref_id = session["client_reference_id"].as_str()
                 .ok_or("No telegram_id or client_reference_id")?;
             let parts: Vec<&str> = ref_id.split('_').collect();
@@ -94,72 +93,138 @@ async fn process_checkout_session(
             parts[0].parse::<i64>().map_err(|_| "Invalid telegram_id in ref_id")?
         }
     };
-    
-    // Extraer créditos
-    let credits = match metadata["credits"].as_str() {
-        Some(c) => c.parse::<i32>().map_err(|_| "Invalid credits")?,
-        None => {
-            let ref_id = session["client_reference_id"].as_str()
-                .ok_or("No credits found")?;
-            let parts: Vec<&str> = ref_id.split('_').collect();
-            if parts.len() < 2 {
-                return Err("Cannot extract credits".to_string());
-            }
-            parts[1].parse::<i32>().map_err(|_| "Invalid credits in ref_id")?
-        }
-    };
-    
-    let pack_name = metadata["pack_name"].as_str().unwrap_or("Unknown");
+
+    let payment_type = metadata["payment_type"].as_str().unwrap_or("credits");
     let amount = session["amount_total"].as_i64().unwrap_or(0) as f64 / 100.0;
     let session_id = session["id"].as_str().unwrap_or("unknown");
-    
-    tracing::info!(
-        "Payment completed: user={}, credits={}, pack={}, amount={:.2}€",
-        telegram_id, credits, pack_name, amount
-    );
-    
-    // Añadir créditos al usuario
     let now = Utc::now();
-    let year = now.year();
-    let quarter = ((now.month() - 1) / 3 + 1) as i32;
-    
-    let result = sqlx::query(
-        "INSERT INTO broadcast_usage (telegram_id, quarter, year, count, paid_extra) 
-         VALUES (?, ?, ?, 0, ?)
-         ON CONFLICT(telegram_id, quarter, year) DO UPDATE SET 
-         paid_extra = paid_extra + ?"
-    )
-    .bind(telegram_id)
-    .bind(quarter)
-    .bind(year)
-    .bind(credits)
-    .bind(credits)
-    .execute(pool)
-    .await;
-    
-    match result {
-        Ok(_) => {
-            tracing::info!("Credits added successfully for user {}", telegram_id);
-            
-            // Registrar el pago
-            let _ = sqlx::query(
-                "INSERT INTO payments (telegram_id, stripe_session_id, amount, credits, pack_name, status, created_at)
-                 VALUES (?, ?, ?, ?, ?, 'completed', ?)"
-            )
-            .bind(telegram_id)
-            .bind(session_id)
-            .bind(amount)
-            .bind(credits)
-            .bind(pack_name)
-            .bind(now.naive_utc())
-            .execute(pool)
-            .await;
-            
-            Ok(())
+
+    if payment_type == "membership" {
+        tracing::info!(
+            "Membership payment completed: user={}, amount={:.2}€, session={}",
+            telegram_id, amount, session_id
+        );
+
+        // Marcar usuario como miembro e interno
+        match sqlx::query(
+            "UPDATE users SET is_internal = TRUE, is_member = TRUE, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?"
+        )
+        .bind(telegram_id)
+        .execute(pool)
+        .await {
+            Ok(_) => tracing::info!("User {} marked as member", telegram_id),
+            Err(e) => tracing::error!("Failed to mark user {} as member: {}", telegram_id, e),
         }
-        Err(e) => {
-            tracing::error!("Failed to add credits: {}", e);
-            Err(format!("Database error: {}", e))
+
+        // Activar empresas pendientes del usuario
+        let empresa_ids: Vec<i64> = sqlx::query_scalar(
+            "SELECT id FROM empresas WHERE telegram_id = ? AND activa = FALSE"
+        )
+        .bind(telegram_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        for empresa_id in empresa_ids {
+            let mut tx = pool.begin().await.map_err(|e| format!("Tx error: {}", e))?;
+            sqlx::query("UPDATE empresas SET activa = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+                .bind(empresa_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("DB error: {}", e))?;
+            sqlx::query("UPDATE centros SET activo = TRUE WHERE empresa_id = ?")
+                .bind(empresa_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("DB error: {}", e))?;
+            sqlx::query("UPDATE servicios SET disponible = TRUE WHERE empresa_id = ?")
+                .bind(empresa_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("DB error: {}", e))?;
+            tx.commit().await.map_err(|e| format!("Commit error: {}", e))?;
+            tracing::info!("Activated pending business {} for user {}", empresa_id, telegram_id);
+        }
+
+        // Registrar el pago
+        let _ = sqlx::query(
+            "INSERT INTO payments (telegram_id, stripe_session_id, amount, credits, pack_name, status, created_at)
+             VALUES (?, ?, ?, ?, ?, 'completed', ?)"
+        )
+        .bind(telegram_id)
+        .bind(session_id)
+        .bind(amount)
+        .bind(0i32)
+        .bind("membership")
+        .bind(now.naive_utc())
+        .execute(pool)
+        .await;
+
+        Ok(())
+    } else {
+        // Extraer créditos (flujo original de packs de difusiones)
+        let credits = match metadata["credits"].as_str() {
+            Some(c) => c.parse::<i32>().map_err(|_| "Invalid credits")?,
+            None => {
+                let ref_id = session["client_reference_id"].as_str()
+                    .ok_or("No credits found")?;
+                let parts: Vec<&str> = ref_id.split('_').collect();
+                if parts.len() < 2 {
+                    return Err("Cannot extract credits".to_string());
+                }
+                parts[1].parse::<i32>().map_err(|_| "Invalid credits in ref_id")?
+            }
+        };
+
+        let pack_name = metadata["pack_name"].as_str().unwrap_or("Unknown");
+
+        tracing::info!(
+            "Payment completed: user={}, credits={}, pack={}, amount={:.2}€",
+            telegram_id, credits, pack_name, amount
+        );
+
+        // Añadir créditos al usuario
+        let year = now.year();
+        let quarter = ((now.month() - 1) / 3 + 1) as i32;
+
+        let result = sqlx::query(
+            "INSERT INTO broadcast_usage (telegram_id, quarter, year, count, paid_extra)
+             VALUES (?, ?, ?, 0, ?)
+             ON CONFLICT(telegram_id, quarter, year) DO UPDATE SET
+             paid_extra = paid_extra + ?"
+        )
+        .bind(telegram_id)
+        .bind(quarter)
+        .bind(year)
+        .bind(credits)
+        .bind(credits)
+        .execute(pool)
+        .await;
+
+        match result {
+            Ok(_) => {
+                tracing::info!("Credits added successfully for user {}", telegram_id);
+
+                // Registrar el pago
+                let _ = sqlx::query(
+                    "INSERT INTO payments (telegram_id, stripe_session_id, amount, credits, pack_name, status, created_at)
+                     VALUES (?, ?, ?, ?, ?, 'completed', ?)"
+                )
+                .bind(telegram_id)
+                .bind(session_id)
+                .bind(amount)
+                .bind(credits)
+                .bind(pack_name)
+                .bind(now.naive_utc())
+                .execute(pool)
+                .await;
+
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Failed to add credits: {}", e);
+                Err(format!("Database error: {}", e))
+            }
         }
     }
 }
@@ -195,32 +260,6 @@ fn constant_time_compare(a: &str, b: &str) -> bool {
 pub struct WebhookResponse {
     pub success: bool,
     pub message: String,
-}
-
-/// Estructura para almacenar pagos
-#[derive(Debug, sqlx::FromRow)]
-pub struct Payment {
-    pub id: i64,
-    pub telegram_id: i64,
-    pub stripe_session_id: String,
-    pub amount: f64,
-    pub credits: i32,
-    pub pack_name: String,
-    pub status: String,
-    pub created_at: chrono::NaiveDateTime,
-}
-
-/// Obtener historial de pagos de un usuario
-pub async fn get_user_payments(
-    telegram_id: i64,
-    pool: &SqlitePool,
-) -> Result<Vec<Payment>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT * FROM payments WHERE telegram_id = ? ORDER BY created_at DESC LIMIT 20"
-    )
-    .bind(telegram_id)
-    .fetch_all(pool)
-    .await
 }
 
 #[cfg(test)]

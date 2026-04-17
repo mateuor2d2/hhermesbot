@@ -25,6 +25,12 @@ pub struct BotConfig {
     pub token: String,
     pub admins: Vec<i64>,
     pub relay_timeout: u64,
+    #[serde(default = "default_web_server_port")]
+    pub web_server_port: u16,
+}
+
+fn default_web_server_port() -> u16 {
+    3000
 }
 
 #[derive(Debug, Clone, Deserialize)]

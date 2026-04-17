@@ -1,10 +1,53 @@
 use chrono::{NaiveDate, Utc};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, Row};
 use std::sync::Arc;
+use std::time::Duration;
+use dashmap::DashMap;
+use tokio::time::timeout;
+
+/// Caché de usuarios activos con TTL de 5 minutos
+#[derive(Debug)]
+pub struct UserCache {
+    users: DashMap<i64, (User, tokio::time::Instant)>,
+    ttl: Duration,
+}
+
+impl UserCache {
+    pub fn new() -> Self {
+        Self {
+            users: DashMap::new(),
+            ttl: Duration::from_secs(300), // 5 minutos
+        }
+    }
+
+    pub fn get(&self, telegram_id: i64) -> Option<User> {
+        if let Some(entry) = self.users.get(&telegram_id) {
+            let (user, timestamp) = entry.value();
+            if timestamp.elapsed() < self.ttl {
+                return Some(user.clone());
+            }
+            // TTL expirado, eliminar entrada
+            drop(entry);
+            self.users.remove(&telegram_id);
+        }
+        None
+    }
+
+    pub fn set(&self, telegram_id: i64, user: User) {
+        self.users.insert(telegram_id, (user, tokio::time::Instant::now()));
+    }
+
+    #[allow(dead_code)]
+    pub fn invalidate(&self, telegram_id: i64) {
+        self.users.remove(&telegram_id);
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Db {
     pub pool: Pool<Sqlite>,
+    pub user_cache: Arc<UserCache>,
+    pub query_timeout: Duration,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -80,14 +123,20 @@ impl Db {
             tokio::fs::create_dir_all(parent).await?;
         }
 
+        // Aumentar pool de conexiones a 20 y agregar timeout
         let pool = SqlitePoolOptions::new()
-            .max_connections(5)
+            .max_connections(20)
+            .acquire_timeout(Duration::from_secs(5))
             .connect(&format!("sqlite:{}?mode=rwc", db_path))
             .await?;
 
         sqlx::migrate!("./migrations").run(&pool).await?;
 
-        Ok(Self { pool })
+        Ok(Self { 
+            pool,
+            user_cache: Arc::new(UserCache::new()),
+            query_timeout: Duration::from_secs(5),
+        })
     }
 
     // ===== USUARIOS =====
@@ -133,10 +182,24 @@ impl Db {
     }
 
     pub async fn get_user(&self, telegram_id: i64) -> anyhow::Result<Option<User>> {
-        let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE telegram_id = ?")
-            .bind(telegram_id)
-            .fetch_optional(&self.pool)
-            .await?;
+        // Primero verificar en caché
+        if let Some(cached_user) = self.user_cache.get(telegram_id) {
+            return Ok(Some(cached_user));
+        }
+
+        // Si no está en caché, consultar DB con timeout
+        let user = timeout(
+            self.query_timeout,
+            sqlx::query_as::<_, User>("SELECT * FROM users WHERE telegram_id = ?")
+                .bind(telegram_id)
+                .fetch_optional(&self.pool)
+        ).await??;
+        
+        // Guardar en caché si existe
+        if let Some(ref u) = user {
+            self.user_cache.set(telegram_id, u.clone());
+        }
+        
         Ok(user)
     }
 

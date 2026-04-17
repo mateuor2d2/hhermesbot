@@ -9,6 +9,7 @@ use crate::ia::SharedIa;
 use crate::text_processor::escape_html;
 use crate::wizard::{self, WizardStep, RegistrationData};
 use crate::dialogue::states::{BotDialogueState, SearchState, SearchField, BroadcastState};
+use crate::payments::StripeClient;
 use std::sync::Arc;
 pub mod broadcast_extended;
 pub mod broadcast;
@@ -179,34 +180,100 @@ pub async fn handle_help(bot: Bot, msg: Message, state: Arc<BotState>) -> anyhow
     let telegram_id = msg.from().as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
     let is_admin = state.config.bot.admins.contains(&telegram_id);
     
-    let mut help_text = format!(
-        "<b>📋 Comandos disponibles:</b>\n\n\
-        /start - Iniciar el bot\n\
-        /help - Mostrar esta ayuda\n\
-        /info - Información sobre {}\n\
-        /chat - Iniciar chat con IA\n\
-        /buscar - Buscar servicios\n\
-        /misdatos - Ver tus datos registrados\n\
-        /registrar - Registrar empresa (requiere aprobación)\n\
-        /mensajes - Ver mensajes recibidos",
+    // Mensaje introductorio dividido en partes para evitar líneas muy largas
+    let intro = format!(
+        "🤖 <b>¿Qué es {}?</b>\n\n\
+        Es un asistente virtual para conectar empresas, autónomos y particulares. \
+        Permite buscar servicios, contactar profesionales, y gestionar difusiones.\n\n\
+        <b>👤 Tipos de usuario:</b>\n\
+        • <b>Particulares/Externos</b>: Buscan servicios y contactan con empresas\n\
+        • <b>Empresas/Autónomos</b>: Ofrecen servicios (requieren registro y aprobación)\n\n",
         state.config.bot.name
     );
     
+    let main_commands = 
+        "<b>📋 COMANDOS PRINCIPALES:</b>\n\n\
+        <b>/start</b> - Iniciar el bot y ver el menú principal\n\
+        <b>/help</b> - Mostrar esta ayuda detallada\n\
+        <b>/info</b> - Información sobre la organización\n\n\
+        <b>💬 Chat con IA:</b>\n\
+        <b>/chat</b> &lt;mensaje&gt; - Hablar con el asistente IA\n\
+        Ej: <code>/chat ¿Qué empresas de diseño hay?</code>\n\
+        • Responde preguntas sobre servicios\n\
+        • Ayuda a encontrar profesionales\n\
+        • Límite: mensajes por día (se indica en cada respuesta)\n\n";
+
+    let search_section = 
+        "<b>🔍 BÚSQUEDA DE SERVICIOS:</b>\n\n\
+        <b>/buscar</b> &lt;término&gt; - Buscar empresas por palabra clave\n\
+        Ej: <code>/buscar abogado</code> o <code>/buscar</code> (búsqueda guiada)\n\
+        • Busca por nombre de empresa\n\
+        • Busca por tipo de servicio\n\
+        • Busca por dirección o ciudad\n\
+        • Puedes contactar directamente desde los resultados\n\n";
+
+    let registration_section = 
+        "<b>🏢 REGISTRO DE EMPRESAS:</b>\n\n\
+        <b>/registrar</b> - Registrar tu empresa o autónomo\n\
+        • Guía paso a paso con wizard\n\
+        • Datos requeridos: nombre, descripción, contacto\n\
+        • Opcional: CIF, dirección, web, logo\n\
+        • Puedes añadir múltiples centros y servicios\n\
+        • <b>Requiere aprobación</b> de un administrador (24-48h)\n\n\
+        <b>/misdatos</b> - Ver tu ficha de empresa registrada\n\
+        • Muestra todos tus datos\n\
+        • Lista tus centros y servicios\n\
+        • Indica si está aprobada o pendiente\n\n";
+
+    let messaging_section = 
+        "<b>📩 MENSAJES Y CONTACTO:</b>\n\n\
+        <b>/mensajes</b> - Ver mensajes recibidos\n\
+        • Lee mensajes de otros usuarios interesados\n\
+        • Responde directamente desde el bot\n\
+        • El sistema protege tu privacidad (no comparte tu @)\n\n";
+
+    let broadcast_section = 
+        "<b>📢 DIFUSIONES/BROADCAST:</b>\n\n\
+        <b>/difundir</b> - Enviar una difusión al canal público\n\
+        • Crea anuncios con título y contenido\n\
+        • Incluye enlaces de contacto\n\
+        • Gratis: cierta cantidad por trimestre\n\
+        • Extra: se pueden comprar créditos adicionales\n\n\
+        <b>/mis_difusiones</b> - Ver historial y créditos disponibles\n\n\
+        <b>/comprar_difusion</b> - Comprar difusiones adicionales\n\
+        • Pago seguro mediante Stripe\n\
+        • Créditos no expiran\n\n";
+
+    let menu_buttons = 
+        "<b>🎛️ BOTONES DEL MENÚ PRINCIPAL:</b>\n\n\
+        Después de <code>/start</code> verás botones organizados en filas:\n\n\
+        <b>Fila 1:</b> 🔍 Buscar | 💬 Chat IA\n\
+        → Acceso rápido a búsqueda y chat\n\n\
+        <b>Fila 2:</b> ℹ️ Info | 📋 Mis datos\n\
+        → Información de la org. y tu perfil\n\n\
+        <b>Fila 3:</b> 📢 Difusiones | 📩 Mensajes\n\
+        → Gestión de difusiones y mensajes recibidos\n\n";
+
+    let mut help_text = intro + main_commands + search_section + 
+                       registration_section + messaging_section + 
+                       broadcast_section + menu_buttons;
+    
     // Añadir comandos de administrador si el usuario es admin
     if is_admin {
-        help_text.push_str("\n\n<b>🔧 Comandos de Administrador:</b>\n\
-        /pendientes - Ver empresas pendientes de aprobación\n\
-        /aprobar &lt;id&gt; - Aprobar una empresa\n\
-        /rechazar &lt;id&gt; - Rechazar una empresa\n\
-        /admin_org &lt;campo&gt; &lt;valor&gt; - Configurar datos de la organización\n\
-        /admin_add_credits &lt;user_id&gt; &lt;cantidad&gt; - Añadir créditos a usuario\n\
-        /admin_member &lt;user_id&gt; &lt;on|off&gt; - Cambiar estado de miembro\n\
-        /admin_users &lt;busqueda&gt; - Buscar usuarios");
+        help_text.push_str("\n\n<b>🔧 COMANDOS DE ADMINISTRADOR:</b>\n\n\
+        <b>/pendientes</b> - Ver empresas esperando aprobación\n\
+        <b>/aprobar</b> &lt;id&gt; - Aprobar una empresa (visible en /pendientes)\n\
+        <b>/rechazar</b> &lt;id&gt; - Rechazar una empresa\n\
+        <b>/admin_org</b> &lt;campo&gt; &lt;valor&gt; - Configurar datos de la org.\n\
+        Ej: <code>/admin_org phone +34123456789</code>\n\n\
+        <b>/admin_add_credits</b> &lt;user_id&gt; &lt;cantidad&gt;\n\
+        → Añadir créditos de difusión a un usuario\n\n\
+        <b>/admin_member</b> &lt;user_id&gt; &lt;on|off&gt;\n\
+        → Activar/desactivar membresía de un usuario\n\n\
+        <b>/admin_users</b> &lt;búsqueda&gt; - Buscar usuarios por nombre o ID\n");
     }
     
-    help_text.push_str("\n\n<b>👤 Tu tipo de usuario:</b>\n\
-        • Externos: Buscar información y contactar\n\
-        • Internos: Además, ofrecer servicios (requiere aprobación)");
+    help_text.push_str("\n\n💡 <b>Consejo:</b> Usa <code>/start</code> para volver al menú principal en cualquier momento.");
 
     bot.send_message(msg.chat.id, help_text)
         .parse_mode(teloxide::types::ParseMode::Html)
@@ -1127,7 +1194,7 @@ pub async fn handle_chat(
 
     // Verificar si la IA está disponible
     let ia = match &state.ia {
-        Some(ia) => ia,
+        Some(ia) => ia.clone(),
         None => {
             bot.send_message(
                 msg.chat.id,
@@ -1154,14 +1221,14 @@ pub async fn handle_chat(
         return Ok(());
     }
 
-    // Mostrar typing
+    // Mostrar typing mientras procesamos
     bot.send_chat_action(msg.chat.id, teloxide::types::ChatAction::Typing)
         .await?;
 
     // Contexto del sistema basado en la entidad
     let context = format!(
         "Eres el asistente virtual de {}. Ayuda a usuarios con información sobre servicios, empresas y autónomos. Responde siempre en español, de forma útil y concisa.",
-        state.config.bot.name  // No necesita escape aquí, es solo para la IA
+        state.config.bot.name
     );
 
     // Botón de volver al menú
@@ -1170,35 +1237,70 @@ pub async fn handle_chat(
         "back_to_menu",
     )]]);
 
-    // Llamar a la IA
-    match ia.chat(&text, Some(&context)).await {
-        Ok(response) => {
-            // Incrementar contador
-            let new_count = state.db.increment_ia_usage(user.telegram_id, today).await?;
-            let remaining = state.config.limits.max_ia_messages_per_day - new_count;
+    let chat_id = msg.chat.id;
+    let telegram_id_for_task = telegram_id;
+    let db = state.db.clone();
+    let bot_clone = bot.clone();
+    let config = state.config.clone();
+    let back_button_clone = back_button.clone();
 
-            let full_response = format!("{}\n\n<i>Quedan {} mensajes hoy</i>", response, remaining);
+    // Procesar IA en segundo plano para no bloquear el bot
+    tokio::spawn(async move {
+        // Mantener el indicador de "escribiendo" activo mientras procesamos
+        let typing_task = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(4)).await;
+                let _ = bot_clone.send_chat_action(chat_id, teloxide::types::ChatAction::Typing).await;
+            }
+        });
 
-            bot.send_message(msg.chat.id, full_response)
-                .parse_mode(teloxide::types::ParseMode::Html)
-                .reply_markup(back_button)
-                .await?;
+        // Llamar a la IA
+        let result = ia.chat(&text, Some(&context)).await;
+        
+        // Cancelar el task de typing
+        typing_task.abort();
+
+        match result {
+            Ok(response) => {
+                // Incrementar contador
+                match db.increment_ia_usage(telegram_id_for_task, today).await {
+                    Ok(new_count) => {
+                        let remaining = config.limits.max_ia_messages_per_day - new_count;
+                        let full_response = format!("{}\n\n<i>Quedan {} mensajes hoy</i>", response, remaining);
+
+                        let _ = bot.send_message(chat_id, full_response)
+                            .parse_mode(teloxide::types::ParseMode::Html)
+                            .reply_markup(back_button)
+                            .await;
+                    }
+                    Err(e) => {
+                        tracing::error!("Error incrementando uso de IA: {}", e);
+                        let _ = bot.send_message(chat_id, response)
+                            .parse_mode(teloxide::types::ParseMode::Html)
+                            .reply_markup(back_button)
+                            .await;
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("IA error: {}", e);
+                let error_msg = if e.to_string().contains("Invalid Authentication") {
+                    "❌ <b>Error de autenticación con la IA</b>\n\n\
+                    La API key configurada no es válida o ha expirado.\n\
+                    Contacta con el administrador para actualizar la configuración.".to_string()
+                } else if e.to_string().contains("timeout") || e.to_string().contains("Timeout") {
+                    "⏱️ <b>La IA está tardando demasiado</b>\n\n\
+                    Por favor, inténtalo de nuevo en unos segundos.".to_string()
+                } else {
+                    "Lo siento, hubo un error al procesar tu mensaje. Inténtalo de nuevo más tarde.".to_string()
+                };
+                let _ = bot.send_message(chat_id, error_msg)
+                    .parse_mode(ParseMode::Html)
+                    .reply_markup(back_button_clone)
+                    .await;
+            }
         }
-        Err(e) => {
-            tracing::error!("IA error: {}", e);
-            let error_msg = if e.to_string().contains("Invalid Authentication") {
-                "❌ <b>Error de autenticación con la IA</b>\n\n\
-                La API key configurada no es válida o ha expirado.\n\
-                Contacta con el administrador para actualizar la configuración.".to_string()
-            } else {
-                "Lo siento, hubo un error al procesar tu mensaje. Inténtalo de nuevo más tarde.".to_string()
-            };
-            bot.send_message(msg.chat.id, error_msg)
-                .parse_mode(ParseMode::Html)
-                .reply_markup(back_button)
-                .await?;
-        }
-    }
+    });
 
     Ok(())
 }
@@ -2149,64 +2251,63 @@ async fn handle_register_callback(
             }
         }
         "register:non_member" => {
-            // No es miembro → verificar si se permite registro de no-miembros
+            // No es miembro → redirigir directamente al pago de membresía en Stripe
             if let Some(chat_id) = chat_id {
                 if let Some(message_id) = message_id {
-                    // Verificar si el bot es exclusivo para miembros
-                    if state.config.membership.exclusive_to_members {
-                        // No se permite registro de no-miembros
-                        bot.edit_message_text(
-                            chat_id,
-                            message_id,
-                            format!(
-                                "⛔ <b>Registro exclusivo para miembros</b>\n\n\
-                                Este bot es exclusivo para miembros de <b>{}</b>.\n\n\
-                                Para registrarte, primero debes ser miembro de la organización.\n\
-                                Contacta con la administración para más información.",
-                                state.config.bot.name
+                    let membership_price = state.config.membership.price.unwrap_or(9.99);
+                    let stripe = StripeClient::new(Arc::new(state.config.stripe.clone()));
+                    
+                    match stripe.create_membership_checkout_session(user_id as i64, membership_price, &state.config.bot.name).await {
+                        Ok(checkout_url) => {
+                            bot.edit_message_text(
+                                chat_id,
+                                message_id,
+                                format!(
+                                    "💳 <b>Membresía requerida</b>\n\n\
+                                    Para registrarte en <b>{}</b> necesitas ser miembro.\n\n\
+                                    Puedes pagar la cuota de membresía directamente de forma segura con Stripe.\n\n\
+                                    💰 <b>Precio:</b> {:.2}€/mes\n\n\
+                                    Una vez completado el pago, tu cuenta se activará como miembro.",
+                                    state.config.bot.name,
+                                    membership_price
+                                )
                             )
-                        )
-                        .parse_mode(ParseMode::Html)
-                        .reply_markup(InlineKeyboardMarkup::new(vec![
-                            vec![
-                                InlineKeyboardButton::callback("📞 Contactar admin", "menu:contact_admin"),
-                            ],
-                            vec![
-                                InlineKeyboardButton::callback("⬅️ Volver", "register:back"),
-                            ],
-                        ]))
-                        .await?;
-                    } else {
-                        // Se permite membresía de pago
-                        let membership_price = state.config.membership.price.unwrap_or(9.99);
-                        
-                        bot.edit_message_text(
-                            chat_id,
-                            message_id,
-                            format!(
-                                "💳 <b>Membresía del Bot</b>\n\n\
-                                Si no eres miembro de <b>{}</b>, puedes obtener acceso al bot con una membresía mensual.\n\n\
-                                📋 <b>Beneficios:</b>\n\
-                                • Publicar tu empresa y servicios\n\
-                                • Enviar difusiones al canal\n\
-                                • Chat con IA ilimitado\n\
-                                • Contactar con otros profesionales\n\n\
-                                💰 <b>Precio:</b> {:.2}€/mes\n\n\
-                                Para contratar la membresía, contacta con un administrador.",
-                                state.config.bot.name,
-                                membership_price
+                            .parse_mode(ParseMode::Html)
+                            .reply_markup(InlineKeyboardMarkup::new(vec![
+                                vec![
+                                    InlineKeyboardButton::url("👉 Pagar membresía", checkout_url.parse().unwrap()),
+                                ],
+                                vec![
+                                    InlineKeyboardButton::callback("📞 Contactar admin", "menu:contact_admin"),
+                                ],
+                                vec![
+                                    InlineKeyboardButton::callback("⬅️ Volver", "register:back"),
+                                ],
+                            ]))
+                            .await?;
+                        }
+                        Err(e) => {
+                            tracing::error!("Error creating membership checkout: {}", e);
+                            bot.edit_message_text(
+                                chat_id,
+                                message_id,
+                                format!(
+                                    "❌ No se pudo generar el enlace de pago.\n\n\
+                                    Por favor, contacta con la administración de <b>{}</b>.",
+                                    state.config.bot.name
+                                )
                             )
-                        )
-                        .parse_mode(ParseMode::Html)
-                        .reply_markup(InlineKeyboardMarkup::new(vec![
-                            vec![
-                                InlineKeyboardButton::callback("📞 Contactar admin", "menu:contact_admin"),
-                            ],
-                            vec![
-                                InlineKeyboardButton::callback("⬅️ Volver", "register:back"),
-                            ],
-                        ]))
-                        .await?;
+                            .parse_mode(ParseMode::Html)
+                            .reply_markup(InlineKeyboardMarkup::new(vec![
+                                vec![
+                                    InlineKeyboardButton::callback("📞 Contactar admin", "menu:contact_admin"),
+                                ],
+                                vec![
+                                    InlineKeyboardButton::callback("⬅️ Volver", "register:back"),
+                                ],
+                            ]))
+                            .await?;
+                        }
                     }
                 }
             }

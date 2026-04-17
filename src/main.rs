@@ -6,6 +6,7 @@ mod ia;
 mod payments;
 mod text_processor;
 mod wizard;
+mod web_server;
 
 use std::sync::Arc;
 
@@ -117,6 +118,15 @@ async fn main() -> anyhow::Result<()> {
     });
 
     tracing::info!("Bot listo: {}", config.bot.name);
+
+    // Arrancar servidor web para webhooks de Stripe y páginas de pago
+    let web_port = config.bot.web_server_port;
+    let web_pool = db.pool.clone();
+    let web_wh_secret = config.stripe.webhook_secret.clone();
+    tokio::spawn(async move {
+        crate::web_server::start_server(web_port, web_pool, web_wh_secret).await;
+    });
+    tracing::info!("Servidor web iniciado en puerto {}", web_port);
 
     // Dispatcher con soporte para diálogos
     let storage = InMemStorage::<BotDialogueState>::new();

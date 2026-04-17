@@ -1,0 +1,15 @@
+[Unit]
+Description=Colegio Bot Telegram
+After=network.target
+
+[Service]
+Type=simple
+User=oc
+WorkingDirectory=/home/oc/.hermes/projects/colegio-bot
+ExecStart=/home/oc/.hermes/projects/colegio-bot/target/release/colegio-bot
+Restart=always
+RestartSec=10
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

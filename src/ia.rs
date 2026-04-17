@@ -44,7 +44,7 @@ struct ResponseMessage {
 impl IaClient {
     pub fn new(config: Arc<ApiConfig>, api_key: String) -> anyhow::Result<Self> {
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
+            .timeout(std::time::Duration::from_secs(15))
             .build()?;
 
         Ok(Self {
