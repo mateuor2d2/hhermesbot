@@ -22,6 +22,7 @@ pub async fn start_server(port: u16, pool: SqlitePool, webhook_secret: String) {
         webhook_secret,
     };
     let app = Router::new()
+        .route("/health", get(health_check))
         .route("/stripe/webhook", post(stripe_webhook))
         .route("/payment/success", get(payment_success))
         .route("/payment/cancel", get(payment_cancel))
@@ -89,9 +90,13 @@ async fn payment_cancel() -> Html<&'static str> {
 <html>
 <head><meta charset="utf-8"><title>Pago cancelado</title></head>
 <body style="font-family:sans-serif;text-align:center;padding:40px;">
-  <h1>🚫 Pago cancelado</h1>
+  <h1>Pago cancelado</h1>
   <p>El pago fue cancelado o no se completó.</p>
   <p>Puedes intentarlo de nuevo desde el bot.</p>
 </body>
 </html>"#)
+}
+
+async fn health_check() -> StatusCode {
+    StatusCode::OK
 }

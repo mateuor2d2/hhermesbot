@@ -1,23 +1,28 @@
 # Build stage
-FROM rust:1.75-slim-bookworm as builder
+FROM rust:1.85-slim-bookworm AS builder
 
 WORKDIR /app
 
-# Install dependencies
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy manifests
-COPY Cargo.toml .
+# Copy manifests first for better layer caching
+COPY Cargo.toml Cargo.lock ./
 
-# Copy source code
+# Build dependencies only (dummy source)
+RUN mkdir src && echo 'fn main() {}' > src/main.rs
+RUN cargo build --release && rm -rf src
+
+# Copy real source
 COPY src ./src
 COPY migrations ./migrations
+COPY config.toml ./
 
-# Build release
-RUN cargo build --release
+# Build release binary
+RUN touch src/main.rs && cargo build --release
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -28,16 +33,23 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy binary
+# Copy binary and assets
 COPY --from=builder /app/target/release/colegio-bot /app/colegio-bot
-
-# Copy migrations
 COPY --from=builder /app/migrations /app/migrations
+COPY --from=builder /app/config.toml /app/config.toml
 
 # Create data directory
 RUN mkdir -p /app/data
+
+# Expose web server port (Stripe webhooks + healthcheck)
+EXPOSE 3000
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:3000/health || exit 1
 
 # Run
 CMD ["./colegio-bot"]

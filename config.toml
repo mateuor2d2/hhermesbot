@@ -6,6 +6,7 @@ description = "Bot oficial del Colegio de Ingenieros"
 token="${BOT_TOKEN}"
 admins = [109371886]  # Telegram IDs de administradores
 relay_timeout = 30  # Timeout en segundos para relay
+web_server_port = 3000
 
 [api]
 # Kimi Code API
@@ -22,7 +23,7 @@ max_ia_messages_per_day = 20
 # Base de datos compartida para todas las instancias
 # Opción 1: SQLite (desarrollo, 1 solo bot)
 type = "sqlite"
-path = "/home/oc/.hermes/projects/colegio-bot/data/bot.db"
+path = "data/bot.db"
 
 # Opción 2: PostgreSQL (producción, múltiples bots)
 # type = "postgres"

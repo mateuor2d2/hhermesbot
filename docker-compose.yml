@@ -5,29 +5,24 @@ services:
     build: .
     container_name: colegio-bot
     restart: unless-stopped
+    ports:
+      - "3000:3000"
     environment:
-      # Telegram Bot Token (from @BotFather)
+      - RUST_LOG=${RUST_LOG:-info}
       - TELOXIDE_TOKEN=${TELOXIDE_TOKEN}
-      # Optional: Test token for development
       - TELOXIDE_TOKEN_TEST=${TELOXIDE_TOKEN_TEST:-}
-      # AI API Key (Kimi/OpenAI)
       - KIMI_API_KEY=${KIMI_API_KEY:-}
-      # Stripe Configuration (optional - for payments)
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
-      # Logging level
-      - RUST_LOG=${RUST_LOG:-info}
     volumes:
-      # Persist database
-      - ./data:/app/data
-      # Configuration file (read-only)
-      - ./config.toml:/app/config.toml:ro
-      # Environment file (optional)
-      - ./.env:/app/.env:ro
-    networks:
-      - bot-network
+      - colegio-bot-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
-networks:
-  bot-network:
-    driver: bridge
+volumes:
+  colegio-bot-data:
