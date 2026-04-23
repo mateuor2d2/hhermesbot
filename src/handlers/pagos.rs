@@ -16,7 +16,7 @@ pub async fn handle_mis_pagos(
     let rows = sqlx::query(
         "SELECT created_at, amount, broadcasts_added, status 
          FROM broadcast_payments 
-         WHERE user_id = ?1
+         WHERE telegram_id = ?1
          ORDER BY created_at DESC LIMIT 10"
     )
     .bind(user_id)

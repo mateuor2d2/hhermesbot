@@ -45,11 +45,11 @@ COPY --from=builder /app/config.toml /app/config.toml
 RUN mkdir -p /app/data
 
 # Expose web server port (Stripe webhooks + healthcheck)
-EXPOSE 3000
+EXPOSE 3001
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:3000/health || exit 1
+    CMD curl -f http://localhost:3001/health || exit 1
 
 # Run
 CMD ["./colegio-bot"]

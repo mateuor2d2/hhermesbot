@@ -6,7 +6,7 @@ description = "Bot oficial del Colegio de Ingenieros"
 token="${BOT_TOKEN}"
 admins = [109371886]  # Telegram IDs de administradores
 relay_timeout = 30  # Timeout en segundos para relay
-web_server_port = 3000
+web_server_port = 3001
 
 [api]
 # Kimi Code API

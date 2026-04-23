@@ -119,6 +119,12 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Bot listo: {}", config.bot.name);
 
+    // ⚠️ ADVERTENCIA: Estado en memoria (no persistente)
+    // InMemStorage + HashMap wizard se pierden al reiniciar el contenedor.
+    // Usuarios en medio del wizard de registro perderán su progreso.
+    // Para producción de alta disponibilidad, migrar a SqliteStorage.
+    tracing::warn!("USING IN-MEMORY STATE — wizard progress will be lost on restart/deploy");
+
     // Arrancar servidor web para webhooks de Stripe y páginas de pago
     let web_port = config.bot.web_server_port;
     let web_pool = db.pool.clone();

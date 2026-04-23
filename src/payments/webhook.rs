@@ -99,6 +99,20 @@ async fn process_checkout_session(
     let session_id = session["id"].as_str().unwrap_or("unknown");
     let now = Utc::now();
 
+    // IDEMPOTENCIA: Verificar si ya procesamos esta sesión
+    let already_processed: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM payments WHERE stripe_session_id = ?"
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("DB error checking idempotency: {}", e))?;
+
+    if already_processed.is_some() {
+        tracing::info!("Stripe session {} already processed — skipping", session_id);
+        return Ok(());
+    }
+
     if payment_type == "membership" {
         tracing::info!(
             "Membership payment completed: user={}, amount={:.2}€, session={}",
